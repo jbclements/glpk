@@ -36,6 +36,17 @@
 ;;;#define NNZ_MAX 500000000 /* = 500*10^6 */
 ;;;/* maximal number of constraint coefficients in the problem object */
 
+;; this function wraps glp_load_matrix to perform the cblock conversion
+;; on this side of the fence
+(define (glp-load-matrix problem coefficient-table)
+  (define row-indices (cons 0 (map car coefficient-table)))
+  (define col-indices (cons 0 (map cadr coefficient-table)))
+  (define coefficients (cons 0.0 (map caddr coefficient-table)))
+  (glp_load_matrix problem
+                   (length coefficient-table)
+                   (list->cblock row-indices _int)
+                   (list->cblock col-indices _int)
+                   (list->cblock coefficients _double)))
 
 ;; this must appear early, to allow its use in glp-create-prob
 (define-glpk glp_delete_prob (_fun _PROB-pointer -> _void)
@@ -442,12 +453,12 @@
 ;;;void glp_set_row_name(glp_prob *P, int i, const char *name);
 ;;;/* assign (change) row name */
 ;; yikes... what if the row doesn't exist?
-(define-glpk glp_set_row_name (_fun _PROB-pointer _int _string -> _void))
+(define-glpk glp_set_row_name (_fun _PROB-pointer _int _bytes -> _void))
 ;;;
 ;;;void glp_set_col_name(glp_prob *P, int j, const char *name);
 ;;;/* assign (change) column name */
 
-(define-glpk glp_set_col_name (_fun _PROB-pointer _int _string -> _void))
+(define-glpk glp_set_col_name (_fun _PROB-pointer _int _bytes -> _void))
 
 ;;;
 ;;;void glp_set_row_bnds(glp_prob *P, int i, int type, double lb,

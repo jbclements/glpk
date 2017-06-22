@@ -1,14 +1,6 @@
 #lang typed/racket
 
-(require/typed "lib.rkt"
-               [glp_term_out ((U 'GLP_ON 'GLP_OFF) -> Symbol)]
-               [#:opaque Problem glpk-problem?]
-               [glp_create_prob (-> Problem)]
-               [glp_set_obj_dir (Problem (U 'GLP_MIN
-                                            'GLP_MAX)
-                                         -> Void)]
-               [glp_add_rows (Problem Natural -> Void)]
-               [M_MAX Natural])
+(provide lp-solve)
 
 ;; this formulation of the problem comes from glpk.pdf. You need
 ;; to express your problem using this formulation.
@@ -30,10 +22,10 @@
 ;; a Constraint sets an auxiliary variable equal to a constant
 ;; plus a linear combination of structural variables.
 ;; So, for instance, the constraint
-;; a = 3x + 4y - 7z + 9 would be represented as
-;; '(a 9 (3 x) (4 y) (-7 z))
+;; a = 3x + 4y - 7z would be represented as
+;; '(a (3 x) (4 y) (-7 z))
 (define-type Constraint
-  (Pairof Symbol (Pairof Real LinearCombination)))
+  (Pairof Symbol LinearCombination))
 
 ;; a Bound contains a lower and an upper limit on a variable,
 ;; either auxiliary or structural. Bounds can be infinite or
@@ -41,12 +33,10 @@
 (define-type Bound (List Symbol BoundNum BoundNum))
 (define-type BoundNum (U 'posinf 'neginf Real))
 
-;; A Solution includes a value for the objective function,
-;; an association list mapping auxiliary variable names
-;; to values, and an association list mapping structural
+;; A Solution includes a value for the objective function
+;; and an association list mapping structural
 ;; variable names to values.
 (define-type Solution (List Float
-                            (Listof (List Symbol Float))
                             (Listof (List Symbol Float))))
 
 ;; A FailCode indicates why the solver did not return a solution.
@@ -72,6 +62,35 @@
      'GLP_ERANGE  ;; result out of range
      ))
 
+(define-type BoundsSym (U 'GLP_FR 'GLP_LO 'GLP_UP 'GLP_DB 'GLP_FX))
+
+(require/typed "lib.rkt"
+               [glp_term_out ((U 'GLP_ON 'GLP_OFF) -> Symbol)]
+               [#:opaque Problem glpk-problem?]
+               [glp_create_prob (-> Problem)]
+               [glp_set_obj_dir (Problem (U 'GLP_MIN
+                                            'GLP_MAX)
+                                         -> Void)]
+               [glp_add_rows (Problem Natural -> Natural)]
+               [glp_add_cols (Problem Natural -> Natural)]
+               [glp_set_row_name (Problem Natural Bytes -> Void)]
+               [glp_set_col_name (Problem Natural Bytes -> Void)]
+               [glp_set_row_bnds (Problem Natural BoundsSym
+                                          Float Float -> Void)]
+               [glp_set_col_bnds (Problem Natural BoundsSym
+                                          Float Float -> Void)]
+               [glp_set_obj_coef (Problem Natural Float -> Void)]
+               [glp_simplex (Problem False -> (U 'success FailCode))]
+               [glp_get_obj_val (Problem -> Float)]
+               [glp_get_col_prim (Problem Natural -> Float)]
+               [M_MAX Natural]
+               [N_MAX Natural]
+               [NNZ_MAX Natural]
+               [glp-load-matrix (Problem (Listof
+                                          (List Natural Natural Flonum))
+                                         -> Void)]
+               )
+
 ;; pulled these limits out of the source code. They really 
 
 ;; the type for lp-solve is derived from the formulation of the
@@ -92,6 +111,11 @@
                         append
                         (map constraint-rhs-vars
                              constraints))))
+  (unless (< 0 (length struct-vars) N_MAX)
+    (raise-argument-error
+     'lp-solve
+     "problem with more than zero and fewer than N_MAX structural vars"
+     2 objective direction constraints bounds))
   (check-no-overlap aux-vars struct-vars)
   (define all-vars (append aux-vars struct-vars))
   (define bounded-vars (map (inst first Symbol Any)
@@ -102,91 +126,166 @@
                               (cdr objective)))
   (check-all-present optimized-vars struct-vars
                      "variables ~e in objective fn are not constrained")
+  (ensure-distinct
+   "objective"
+   (map (inst cadr Any Symbol Any) (cdr objective)))
+  ;; turn the pairs around to allow assoc to work:
+  (define objective-assoc : (Listof (Pairof Symbol Real))
+    (map (λ ([pr : (List Real Symbol)]) : (Pairof Symbol Real)
+           (cons (second pr) (first pr)))
+         (cdr objective)))
   (glp_term_out 'GLP_OFF)
   (define prob (glp_create_prob))
   (glp_set_obj_dir prob
                    (cond [(eq? direction 'max) 'GLP_MAX]
-                         [(eq? direction 'min) 'GLP_MIN]))
-  (glp_add_rows prob (length constraints))
-  
-  (error 'lp-solve
-         "unimplemented"))
+                         [(eq? direction 'min) 'GLP_MIN]))  
+  (row/col-setup prob aux-vars bounds 'row)
+  (row/col-setup prob struct-vars bounds 'col)
+  (glp_set_obj_coef prob 0 (real->double-flonum (car objective)))
+  ;; FIXME check that uninitialized coefficients are set to 0.0
+  (lin-comb-map
+   struct-vars
+   (cdr objective)
+   (λ ([j : Natural] [val : Flonum]) : Void
+     (glp_set_obj_coef prob j val))
+   "objective")
+  (define nonzero-matrix-tuples
+    (apply
+     append
+     (for/list : (Listof (Listof (List Natural Natural Flonum)))
+      ([constraint (in-list constraints)]
+       [i : Natural (in-range 1 (add1 (length constraints)))])
+      (lin-comb-map
+       struct-vars
+       (cdr constraint)
+       (λ ([j : Natural] [val : Flonum]) : (List Natural Natural Flonum)
+         (list i j val))
+       "constraint"))))
+  (when (< NNZ_MAX (length nonzero-matrix-tuples))
+    (error 'lp-solve
+           "problem has more than NNZ_MAX nonzero constraint coefficients"))
+  (glp-load-matrix prob nonzero-matrix-tuples)
+  (match (glp_simplex prob #f)
+    ['success
+     (list
+      (glp_get_obj_val prob)
+      (for/list ([struct-var (in-list struct-vars)]
+                 [i : Natural (in-range 1 (add1 (length struct-vars)))])
+        (list struct-var (glp_get_col_prim prob i))))]
+    [fail-code
+     (cast fail-code FailCode)]))
 
-'(
-;s4:   glp_add_rows(lp, 3);
-(glp_add_rows lp 3)
-;s5:   glp_set_row_name(lp, 1, "p");
-(glp_set_row_name lp 1 "p")
-;s6:   glp_set_row_bnds(lp, 1, GLP_UP, 0.0, 100.0);
-(glp_set_row_bnds lp 1 'GLP_UP 0.0 100.0)
-;s7:   glp_set_row_name(lp, 2, "q");
-;s8:   glp_set_row_bnds(lp, 2, GLP_UP, 0.0, 600.0);
-(glp_set_row_name lp 2 "q")
-(glp_set_row_bnds lp 2 'GLP_UP 0.0 600.0)
-;s9:   glp_set_row_name(lp, 3, "r");
-;s10:  glp_set_row_bnds(lp, 3, GLP_UP, 0.0, 300.0);
-(glp_set_row_name lp 3 "r")
-(glp_set_row_bnds lp 3 'GLP_UP 0.0 300.0)
-;s11:  glp_add_cols(lp, 3);
-(glp_add_cols lp 3)
-;s12:  glp_set_col_name(lp, 1, "x1");
-;s13:  glp_set_col_bnds(lp, 1, GLP_LO, 0.0, 0.0);
-(glp_set_col_name lp 1 "x1")
-(glp_set_col_bnds lp 1 'GLP_LO 0.0 0.0)
-;s14:  glp_set_obj_coef(lp, 1, 10.0);
-(glp_set_obj_coef lp 1 10.0)
-;s15:  glp_set_col_name(lp, 2, "x2");
-;s16:  glp_set_col_bnds(lp, 2, GLP_LO, 0.0, 0.0);
-;s17:  glp_set_obj_coef(lp, 2, 6.0);
-(glp_set_col_name lp 2 "x2")
-(glp_set_col_bnds lp 2 'GLP_LO 0.0 0.0)
-(glp_set_obj_coef lp 2 6.0)
-;s18:  glp_set_col_name(lp, 3, "x3");
-;s19:  glp_set_col_bnds(lp, 3, GLP_LO, 0.0, 0.0);
-;s20:  glp_set_obj_coef(lp, 3, 4.0);
-(glp_set_col_name lp 3 "x3")
-(glp_set_col_bnds lp 3 'GLP_LO 0.0 0.0)
-(glp_set_obj_coef lp 3 4.0)
+;; given the list of structural variables and a LinearCombination
+;; (without repeats)
+;; and a function, call the function once for each of the structural
+;; variables, passing in the index and the corresponding coefficient
+;; (0.0 if the variable doesn't occur in the linear combination).
+(: lin-comb-map
+   (All (T) ((Listof Symbol) LinearCombination (Natural Flonum -> T)
+                             String
+                             -> (Listof T))))
+(define (lin-comb-map vars lin-comb fn kind)
+  (ensure-distinct
+   kind
+   (map (inst cadr Any Symbol Any) lin-comb))
+  ;; turn the pairs around to allow assoc to work:
+  (define lin-comb-assoc : (Listof (Pairof Symbol Real))
+    (map (λ ([pr : (List Real Symbol)]) : (Pairof Symbol Real)
+           (cons (second pr) (first pr)))
+         lin-comb))
+  (for/list : (Listof T)
+    ([var (in-list vars)]
+     [j : Natural (in-range 1 (add1 (length vars)))]
+     #:when (assoc var lin-comb-assoc))
+    (match (assoc var lin-comb-assoc)
+      [(cons _ n)
+       (fn j (real->double-flonum n))])))
 
-;s21: ia[1]=1,ja[1]=1,ar[1]=
-;s22: ia[2]=1,ja[2]=2,ar[2]=
-;s23: ia[3]=1,ja[3]=3,ar[3]=
-;s24:  ia[4] = 2, ja[4] = 1, ar[4] = 10.0; /* a[2,1] = 10 */
-;s25: ia[5]=3,ja[5]=1,ar[5]= 2.0;/*a[3,1]= 2*/
-;s26: ia[6]=2,ja[6]=2,ar[6]= 4.0;/*a[2,2]= 4*/
-;1If you just need to solve LP or MIP instance, you may write it in MPS or CPLEX LP format and then use the GLPK stand-alone solver to obtain a solution. This is much less time-consuming than programming in C with GLPK API routines.
-;1.0;/*a[1,1]= 1*/ 1.0;/*a[1,2]= 1*/ 1.0;/*a[1,3]= 1*/
-; 11
-;s27: ia[7]=3,ja[7]=2,ar[7]= 2.0;/*a[3,2]= 2*/
-;s28: ia[8]=2,ja[8]=3,ar[8]= 5.0;/*a[2,3]= 5*/
-;s29: ia[9]=3,ja[9]=3,ar[9]= 6.0;/*a[3,3]= 6*/
-;s30:  glp_load_matrix(lp, 9, ia, ja, ar);
-;; first element of each array is ignored, too weird...
-(glp_load_matrix lp 9
-                 (vector->cblock (vector 0 1 1 1 2 3 2 3 2 3) _int)
-                 (vector->cblock (vector 0 1 2 3 1 1 2 2 3 3) _int)
-                 (vector->cblock (vector 0.0
-                                         1.0 1.0 1.0
-                                         10.0 2.0 4.0
-                                         2.0 5.0 6.0)
-                                 _double))
-;s31:  glp_simplex(lp, NULL);
-(glp_simplex lp #f)
-;s32:  z = glp_get_obj_val(lp);
-(define z (glp_get_obj_val lp))
-;s33:  x1 = glp_get_col_prim(lp, 1);
-;s34:  x2 = glp_get_col_prim(lp, 2);
-;s35:  x3 = glp_get_col_prim(lp, 3);
-(define x1 (glp_get_col_prim lp 1))
-(define x2 (glp_get_col_prim lp 2))
-(define x3 (glp_get_col_prim lp 3))
-(printf "\nz = ~v; x1 = ~v; x2 = ~v; x3 = ~v\n"
-        z x1 x2 x3))
+;; given the problem and
+;; a list of auxiliary (row) or structural (column) variables,
+;; and the list of all the bounds, and whether this is for rows
+;; or columns, set up the rows or columns appropriately
+(define (row/col-setup [prob : Problem]
+                       [vars : (Listof Symbol)]
+                       [bounds : (Listof Bound)]
+                       [row/col : (U 'row 'col)]) : Void
+  (cond [(eq? row/col 'row)
+         (glp_add_rows prob (length vars))]
+        [else
+         (glp_add_cols prob (length vars))])
+  (for ([name (in-list vars)]
+        [i : Natural (in-range 1 (add1 (length vars)))])
+    (define namebytes (string->bytes/utf-8
+                       (symbol->string name)))
+    (ensure-short namebytes)
+    (cond [(eq? row/col 'row)
+           (glp_set_row_name prob i namebytes)]
+          [else
+           (glp_set_col_name prob i namebytes)])
+    (define (set-row/col-bound [type : BoundsSym]
+                               [lo : Float]
+                               [hi : Float])
+      (cond [(eq? row/col 'row)
+             (glp_set_row_bnds prob i type lo hi)]
+            [else
+             (glp_set_col_bnds prob i type lo hi)]))
+    (match (assoc name bounds)
+      [(and (list _ _ 'neginf) badbound)
+       (error 'lp-solve
+              "neginf not allowed as upper bound: ~e"
+              badbound)]
+      [(and (list _ 'posinf _) badbound)
+       (error 'lp-solve
+              "posinf not allowed as lower bound: ~e"
+              badbound)]
+      [(list _ 'neginf 'posinf)
+       (set-row/col-bound 'GLP_FR 0.0 0.0)]
+      [(list _ 'neginf n)
+       ;; n can't be posinf or neginf by earlier checks:
+       (set-row/col-bound 'GLP_UP
+                          0.0
+                          (real->double-flonum (cast n Real)))]
+      ;; lo can't be neginf or posinf now
+      [(list _ n 'posinf)
+       ;; n can't be posinf or neginf by earlier checks:
+       (set-row/col-bound 'GLP_LO
+                          (real->double-flonum (cast n Real))
+                          0.0)]
+      ;; neither hi nor lo can be either posinf or neginf now
+      [(list _ lo hi)
+       ;; TR can't figure out the invariants, must cast:
+       (define lonum (cast lo Real))
+       (define hinum (cast hi Real))
+       (cond [(< lonum hinum)
+              (set-row/col-bound 'GLP_DB
+                                 (real->double-flonum lonum)
+                                 (real->double-flonum hinum))]
+             [(= lonum hinum)
+              (set-row/col-bound 'GLP_FX
+                                 (real->double-flonum lonum)
+                                 (real->double-flonum hinum))]
+             [else
+              (error 'lp-solve
+                     "low bound ~v higher than high bound ~v"
+                     lonum hinum)])]
+      [#f (error 'lp-solve
+                 ;; we already checked for this...
+                 "internal error 594b0085 bound not found")])))
+
+
+
+;; given a byte-string, ensure it's less than 256 bytes
+(define (ensure-short [b : Bytes]) : Void
+  (when (< 255 (bytes-length b))
+    (raise-argument-error
+     'ensure-short
+     "var name less than 256 characters"
+     0 b)))
 
 ;; given a constraint, return a list of its rhs (structural) vars.
 (define (constraint-rhs-vars [c : Constraint]) : (Listof Symbol)
   (map (ann second ((List Real Symbol) -> Symbol))
-       (cddr c)))
+       (cdr c)))
 
 ;; check that two sets of symbols (aux & struct vars) don't overlap
 (define (check-no-overlap [aux-vars : (Listof Symbol)]
@@ -227,27 +326,42 @@
 ;; 480_csc + 480_cpe          < 8 ;; 8 sections offered
 ;; 490_csc + 490_cpe + 490_se < 6 ;; 6 sections offered
 ;;           431_cpe + 431_se < 2 ;; 2 sections offered
-;; 480_csc + 490_csc = 10 ;; these students need 5 sections of TE
+;; 480_csc + 490_csc = 10 ;; these students need 10 sections of TE
 ;; 480_cpe + 490_cpe + 431_cpe = 2 ;; these need 2 sections of TE
 ;; 490_se  + 431_se = 2 ;; these need 2 sections of TE
 ;; actually just want a feasible solution...
-#;(lp-solve '(0 (1 431_se)) 'max
-          '((480_extra 8 (-1 480_csc) (-1 480_cpe))
-            (490_extra 6 (-1 480_csc) (-1 490_cpe) (-1 490_se))
-            (431_extra 2 (-1 431_cpe) (-1 431_se)))
-          '((480_extra 0 posinf)
-            (490_extra 0 posinf)
-            (431_extra 0 posinf)
-            (480_csc 0 posinf) (480_cpe 0 posinf)
-            (490_csc 0 posinf) (490_cpe 0 posinf) (490_se 0 posinf)
-            (431_cpe 0 posinf) (431_se 0 posinf)))
+  (check-equal?
+   (lp-solve '(0 (1 490_se)) 'max
+             '((480_extra (1 480_csc) (1 480_cpe))
+               (490_extra (1 480_csc) (1 490_cpe) (1 490_se))
+               (431_extra (1 431_cpe) (1 431_se))
+               (csc_tes (1 480_csc) (1 490_csc))
+               (cpe_tes (1 480_cpe) (1 490_cpe) (1 431_cpe))
+               (se_tes (1 490_se) (1 431_se)))
+             '((480_extra 0 8)
+               (490_extra 0 6)
+               (431_extra 0 2)
+               (csc_tes 10 10)
+               (cpe_tes 2 2)
+               (se_tes 2 2)
+               (480_csc 0 posinf) (480_cpe 0 posinf)
+               (490_csc 0 posinf) (490_cpe 0 posinf) (490_se 0 posinf)
+               (431_cpe 0 posinf) (431_se 0 posinf)))
+   '(2.0
+     ((480_csc 4.0)
+      (480_cpe 2.0)
+      (490_cpe 0.0)
+      (490_se 2.0)
+      (431_cpe 0.0)
+      (431_se 0.0)
+      (490_csc 6.0))))
 
 (check-exn #px"duplicate auxiliary variable name: '480_extra"
            (λ ()
              (lp-solve '(0 (1 431_se)) 'max
-                       '((480_extra 8 (-1 480_csc) (-1 480_cpe))
-                         (480_extra 6 (-1 480_csc) (-1 490_cpe) (-1 490_se))
-                         (431_extra 2 (-1 431_cpe) (-1 431_se)))
+                       '((480_extra (-1 480_csc) (-1 480_cpe))
+                         (480_extra (-1 480_csc) (-1 490_cpe) (-1 490_se))
+                         (431_extra (-1 431_cpe) (-1 431_se)))
                        '((480_extra 0 posinf)
                          (490_extra 0 posinf)
                          (431_extra 0 posinf)
@@ -258,9 +372,9 @@
   (check-exn #px"auxiliary variables.*appear in the RHS of some con"
              (λ ()
                (lp-solve '(0 (1 431_se)) 'max
-                         '((480_extra 8 (-1 480_csc) (-1 480_cpe))
-                           (490_extra 6 (-1 480_csc) (-1 490_cpe) (-1 490_se))
-                           (431_extra 2 (-1 431_cpe) (-1 431_se)
+                         '((480_extra (-1 480_csc) (-1 480_cpe))
+                           (490_extra (-1 480_csc) (-1 490_cpe) (-1 490_se))
+                           (431_extra (-1 431_cpe) (-1 431_se)
                                       (3 490_extra)))
                          '((480_extra 0 posinf)
                            (490_extra 0 posinf)
@@ -272,9 +386,9 @@
   (check-exn #px"variables.*have no provided bounds"
              (λ ()
                (lp-solve '(0 (1 431_se)) 'max
-                         '((480_extra 8 (-1 480_csc) (-1 480_cpe))
-                           (490_extra 6 (-1 480_csc) (-1 490_cpe) (-1 490_se))
-                           (431_extra 2 (-1 431_cpe) (-1 431_se)))
+                         '((480_extra (-1 480_csc) (-1 480_cpe))
+                           (490_extra (-1 480_csc) (-1 490_cpe) (-1 490_se))
+                           (431_extra (-1 431_cpe) (-1 431_se)))
                          '((480_extra 0 posinf)
                            (490_extra 0 posinf)
                            (480_csc 0 posinf) (480_cpe 0 posinf)
@@ -285,9 +399,9 @@
    #px"variables.*in objective fn are not constrained"
    (λ ()
      (lp-solve '(0 (1 ZZZ)) 'max
-               '((480_extra 8 (-1 480_csc) (-1 480_cpe))
-                 (490_extra 6 (-1 480_csc) (-1 490_cpe) (-1 490_se))
-                 (431_extra 2 (-1 431_cpe) (-1 431_se)))
+               '((480_extra (-1 480_csc) (-1 480_cpe))
+                 (490_extra (-1 480_csc) (-1 490_cpe) (-1 490_se))
+                 (431_extra (-1 431_cpe) (-1 431_se)))
                '((480_extra 0 posinf)
                  (490_extra 0 posinf)
                  (431_extra 0 posinf)

@@ -16,41 +16,41 @@ s1:   lp = glp_create_prob();
 |#
 (define lp (glp_create_prob))
 ;s2:   glp_set_prob_name(lp, "sample");
-(glp_set_prob_name lp "sample")
+(glp_set_prob_name lp #"sample")
 ;s3:   glp_set_obj_dir(lp, GLP_MAX);
 (glp_set_obj_dir lp 'GLP_MAX)
 ;s4:   glp_add_rows(lp, 3);
 (glp_add_rows lp 3)
 ;s5:   glp_set_row_name(lp, 1, "p");
-(glp_set_row_name lp 1 "p")
+(glp_set_row_name lp 1 #"p")
 ;s6:   glp_set_row_bnds(lp, 1, GLP_UP, 0.0, 100.0);
 (glp_set_row_bnds lp 1 'GLP_UP 0.0 100.0)
 ;s7:   glp_set_row_name(lp, 2, "q");
 ;s8:   glp_set_row_bnds(lp, 2, GLP_UP, 0.0, 600.0);
-(glp_set_row_name lp 2 "q")
+(glp_set_row_name lp 2 #"q")
 (glp_set_row_bnds lp 2 'GLP_UP 0.0 600.0)
 ;s9:   glp_set_row_name(lp, 3, "r");
 ;s10:  glp_set_row_bnds(lp, 3, GLP_UP, 0.0, 300.0);
-(glp_set_row_name lp 3 "r")
+(glp_set_row_name lp 3 #"r")
 (glp_set_row_bnds lp 3 'GLP_UP 0.0 300.0)
 ;s11:  glp_add_cols(lp, 3);
 (glp_add_cols lp 3)
 ;s12:  glp_set_col_name(lp, 1, "x1");
 ;s13:  glp_set_col_bnds(lp, 1, GLP_LO, 0.0, 0.0);
-(glp_set_col_name lp 1 "x1")
+(glp_set_col_name lp 1 #"x1")
 (glp_set_col_bnds lp 1 'GLP_LO 0.0 0.0)
 ;s14:  glp_set_obj_coef(lp, 1, 10.0);
 (glp_set_obj_coef lp 1 10.0)
 ;s15:  glp_set_col_name(lp, 2, "x2");
 ;s16:  glp_set_col_bnds(lp, 2, GLP_LO, 0.0, 0.0);
 ;s17:  glp_set_obj_coef(lp, 2, 6.0);
-(glp_set_col_name lp 2 "x2")
+(glp_set_col_name lp 2 #"x2")
 (glp_set_col_bnds lp 2 'GLP_LO 0.0 0.0)
 (glp_set_obj_coef lp 2 6.0)
 ;s18:  glp_set_col_name(lp, 3, "x3");
 ;s19:  glp_set_col_bnds(lp, 3, GLP_LO, 0.0, 0.0);
 ;s20:  glp_set_obj_coef(lp, 3, 4.0);
-(glp_set_col_name lp 3 "x3")
+(glp_set_col_name lp 3 #"x3")
 (glp_set_col_bnds lp 3 'GLP_LO 0.0 0.0)
 (glp_set_obj_coef lp 3 4.0)
 
