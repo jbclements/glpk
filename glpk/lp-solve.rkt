@@ -64,9 +64,14 @@
 
 (define-type BoundsSym (U 'GLP_FR 'GLP_LO 'GLP_UP 'GLP_DB 'GLP_FX))
 
+
+(require (only-in typed/racket/unsafe unsafe-require/typed))
+
+(unsafe-require/typed "lib.rkt"
+               [#:opaque Problem glpk-problem?])
+
 (require/typed "lib.rkt"
                [glp_term_out ((U 'GLP_ON 'GLP_OFF) -> Symbol)]
-               [#:opaque Problem glpk-problem?]
                [glp_create_prob (-> Problem)]
                [glp_set_obj_dir (Problem (U 'GLP_MIN
                                             'GLP_MAX)
@@ -154,7 +159,9 @@
      append
      (for/list : (Listof (Listof (List Natural Natural Flonum)))
       ([constraint (in-list constraints)]
-       [i : Natural (in-range 1 (add1 (length constraints)))])
+       [i : Natural
+          (ann (in-range 1 (add1 (length constraints)))
+               (Sequenceof Natural))])
       (lin-comb-map
        struct-vars
        (cdr constraint)
@@ -169,8 +176,11 @@
     ['success
      (list
       (glp_get_obj_val prob)
-      (for/list ([struct-var (in-list struct-vars)]
-                 [i : Natural (in-range 1 (add1 (length struct-vars)))])
+      (for/list : (Listof (List Symbol Float))
+        ([struct-var (in-list struct-vars)]
+         [i : Natural
+            (ann (in-range 1 (add1 (length struct-vars)))
+                 (Sequenceof Natural))])
         (list struct-var (glp_get_col_prim prob i))))]
     [fail-code
      (cast fail-code FailCode)]))
@@ -195,7 +205,8 @@
          lin-comb))
   (for/list : (Listof T)
     ([var (in-list vars)]
-     [j : Natural (in-range 1 (add1 (length vars)))]
+     [j : Natural (ann (in-range 1 (add1 (length vars)))
+                       (Sequenceof Natural))]
      #:when (assoc var lin-comb-assoc))
     (match (assoc var lin-comb-assoc)
       [(cons _ n)
