@@ -10,11 +10,16 @@
 
 This collection provides a simple racket interface to the
 @link["https://www.gnu.org/software/glpk/"]{Gnu Linear Programming Kit},
+by Andrew O. Makhorin,
 allowing you to solve linear optimization problems.
 
-It does not include that library; you'll need to install it yourself,
+This package does not include that library; you'll need to install it yourself,
 using the package manager of your choice, or by building it from
 source.
+
+Note that you may need to configure Racket's search path to allow
+it to find the installed library; search the raco documentation
+for @racket['lib-search-dirs].
 
 The GLPK library comes with many bells and whistles, including dual
 simplex, Mixed Integer Programming (MIP), and other related problems.
