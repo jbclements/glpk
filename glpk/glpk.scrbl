@@ -145,6 +145,8 @@ constraint? = (pair/c symbol? lin-comb?)]
 
   Yikes! Let's see an example.
 
+  @subsection{An Example}
+
   Okay, let's say you're trying to figure out whether you have
   enough food for your picnic. In particular, you're buying
   hamburgers, slices of bread, and pickles. You have three kinds
@@ -238,13 +240,58 @@ Here's the call:
 
 @code|{'(195.0 ((a 10.0) (k 10.0) (cb 0.0) (cp 0.0) (ck 30.0)))}|
 
-In other words: 10 adults, 10 kinds, and a pile of chickens to
+In other words: 10 adults, 10 kids, and a pile of chickens to
 vacuum up the leftover pickles.
 
 We can add arbitrary further constraints on this: each chicken
 must be chaperoned by an adult, each chicken must be chaperoned
-by an adult, no adult can chaperone both a child and a chicken,
-etc. etc.
+by an adult, no adult can chaperone both a child and a chicken.
+
+To model this, we divide adults into adults chaperoning kinds
+(@racket[ak]) and adults chaperoning chickens (@racket[ac]).
+We could replace @racket[a] entirely, but it's easier just
+to require that @racket[a] is the sum of @racket[ac] and
+@racket[ak]. Also, let's bump up the desirability of chickens,
+just to get a more interesting result:
+
+@codeblock|{
+(lp-solve
+ '(0 (8 a) (10 k) (2 cb) (2 cp) (2 ck))
+ 'max
+ '((fb (1 a) (2 k) (1 cb))
+   (fp (1 a) (1 k) (1 cp))
+   (fk (2 a) (1 ck))
+   (z (-1 a) (1 ak) (1 ac))
+   (excessak (1 ak) (-1 k))
+   (excessac (1 ac) (-1 cb) (-1 cp) (-1 ck)))
+ '((z 0 0)
+   (ak 0 posinf)
+   (ac 0 posinf)
+   (excessak 0 posinf)
+   (excessac 0 posinf)
+   (fb 0 30)
+   (fp 0 20)
+   (fk 0 50)
+   (a 0 posinf)
+   (k 0 posinf)
+   (cb 0 posinf)
+   (cp 0 posinf)
+   (ck 0 posinf)))}|
+
+The result:
+
+@codeblock|{
+'(200.0
+  ((a 20.0)
+   (k 0.0)
+   (cb 10.000000000000002)
+   (cp 0.0)
+   (ck 9.999999999999998)
+   (ak 0.0)
+   (ac 20.0)))}|
+
+That is: 20 adults, all chaperoning chickens. 10 of
+the chickens get bread, 10 of the chickens get pickles.
 
 Nifty!
 

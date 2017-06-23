@@ -2,17 +2,6 @@
 
 (define collection 'multi)
 
-#|undeclared dependency detected
-raco setup:   for package: "glpk"
-raco setup:   on packages:
-raco setup:    "base"
-raco setup:    "typed-racket-lib"
-raco setup:   on packages for build:
-raco setup:    "racket-doc"
-raco setup:    "scribble-lib"
-raco setup:    "scribble-math"
-raco setup:    "typed-racket-more"
-|#
 (define deps
   (list "base"
         "typed-racket-lib"))
