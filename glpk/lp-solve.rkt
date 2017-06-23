@@ -1,4 +1,4 @@
-#lang typed/racket
+#lang typed/racket/base
 
 (provide lp-solve)
 
@@ -30,8 +30,9 @@
 ;; a Bound contains a lower and an upper limit on a variable,
 ;; either auxiliary or structural. Bounds can be infinite or
 ;; finite.
-(define-type Bound (List Symbol BoundNum BoundNum))
-(define-type BoundNum (U 'posinf 'neginf Real))
+(define-type Bound (List Symbol LoBound HiBound))
+(define-type LoBound (U 'neginf Real))
+(define-type HiBound (U 'posinf Real))
 
 ;; A Solution includes a value for the objective function
 ;; and an association list mapping structural
@@ -96,7 +97,17 @@
                                          -> Void)]
                )
 
-;; pulled these limits out of the source code. They really 
+(require (only-in racket/list
+                  remove-duplicates
+                  check-duplicates
+                  first
+                  second
+                  empty?)
+         racket/match
+         (only-in racket/set
+                  set-intersect
+                  list->set
+                  set-empty?))
 
 ;; the type for lp-solve is derived from the formulation of the
 ;; linear programming problem as described in glpk.pdf.
@@ -147,7 +158,6 @@
   (row/col-setup prob aux-vars bounds 'row)
   (row/col-setup prob struct-vars bounds 'col)
   (glp_set_obj_coef prob 0 (real->double-flonum (car objective)))
-  ;; FIXME check that uninitialized coefficients are set to 0.0
   (lin-comb-map
    struct-vars
    (cdr objective)
@@ -241,22 +251,14 @@
             [else
              (glp_set_col_bnds prob i type lo hi)]))
     (match (assoc name bounds)
-      [(and (list _ _ 'neginf) badbound)
-       (error 'lp-solve
-              "neginf not allowed as upper bound: ~e"
-              badbound)]
-      [(and (list _ 'posinf _) badbound)
-       (error 'lp-solve
-              "posinf not allowed as lower bound: ~e"
-              badbound)]
       [(list _ 'neginf 'posinf)
        (set-row/col-bound 'GLP_FR 0.0 0.0)]
       [(list _ 'neginf n)
-       ;; n can't be posinf or neginf by earlier checks:
+       ;; n can't be posinf by earlier check:
        (set-row/col-bound 'GLP_UP
                           0.0
                           (real->double-flonum (cast n Real)))]
-      ;; lo can't be neginf or posinf now
+      ;; lo must be a number now
       [(list _ n 'posinf)
        ;; n can't be posinf or neginf by earlier checks:
        (set-row/col-bound 'GLP_LO
