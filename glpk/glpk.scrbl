@@ -23,8 +23,18 @@ for @racket['lib-search-dirs].
 
 The GLPK library comes with many bells and whistles, including dual
 simplex, Mixed Integer Programming (MIP), and other related problems.
+
+Here's a list, taken from the GLPK documentation:
+
+@itemlist[
+@item{    primal and dual simplex methods}
+@item{    primal-dual interior-point method}
+@item{    branch-and-cut method}
+@item{    translator for GNU MathProg} ]
+
 Right now, this library does not support any of those bells and whistles;
-it just allows basic simplex solving.
+it just allows basic primal simplex solving. It wouldn't be hard to extend
+this library on an as-needed basis.
 
 It's worth mentioning that GLPK does have one "interesting" design
 choice; when you supply arguments to GLPK that don't make sense—for
@@ -41,16 +51,18 @@ should be aware of.
 @section{The Linear Programming problem}
 
 The linear programming problem can be formulated as follows: given a
-set of constraints over a set of variables, and a function to be maximized
+set of linear constraints over a set of variables, and a function to be maximized
 (or minimized), find the set of values for the variables that maximize
 (or minimize) the function.
+
 
 Okay, so what kind of constraints are possible? Well, each constraint
 consists of a single equality, of the form
 
 @$${a = \sum_{i} K_i x_i}
 
-... where @${a} is what's called an "auxiliary" variable. These
+... where the @${K_i} are real numbers, and
+@${a} is what's called an "auxiliary" variable. These
 auxiliary variables must occur only once each, on the left-hand
 side of the corresponding constraint.
 
