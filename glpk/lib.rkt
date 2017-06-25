@@ -152,6 +152,13 @@
 ;;;#define GLP_NOFEAS         4  /* no feasible solution exists */
 ;;;#define GLP_OPT            5  /* solution is optimal */
 ;;;#define GLP_UNBND          6  /* solution is unbounded */
+
+(define _solution-status (_enum '(GLP_UNDEF = 1
+                                  GLP_FEAS
+                                  GLP_INFEAS
+                                  GLP_NOFEAS
+                                  GLP_OPT
+                                  GLP_UNBND)))
 ;;;
 ;;;typedef struct
 ;;;{     /* basis factorization control parameters */
@@ -636,6 +643,10 @@
 ;;;
 ;;;int glp_get_status(glp_prob *P);
 ;;;/* retrieve generic status of basic solution */
+
+(define-glpk glp_get_status (_fun _PROB-pointer
+                                  -> _solution-status))
+
 ;;;
 ;;;int glp_get_prim_stat(glp_prob *P);
 ;;;/* retrieve status of primal basic solution */

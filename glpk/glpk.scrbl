@@ -46,7 +46,7 @@ have chosen, but we're stuck with it.
 I believe I have designed and implemented the
 @racket[lp-solve] function in such a way that this should not
 be possible. Nevertheless, it's something that users of the library
-should be aware of.
+should be aware of. [See section @secref["err"]
 
 @section{The Linear Programming problem}
 
@@ -86,7 +86,7 @@ An example appears below.
                    [constraints (listof constraint?)]
                    [bounds (listof bound?)])
          (or/c (list/c flonum? (listof (list/c symbol? flonum?)))
-               symbol?)]{
+               (List symbol? symbol?))]{
  Solves a linear programming problem.
 
  Both the objective and the constraints make use of a "linear combination"
@@ -127,8 +127,10 @@ constraint? = (pair/c symbol? lin-comb?)]
   The result is a list containing the maximal (or minimal) value of
   the objective function, along with a list of lists mapping structural
   variables to the values that produce that optimal value, unless
-  no solution is possible, in which case a symbol representing
-  an error code is returned.
+  no solution is possible. There are two ways that this can be signalled;
+  either as a list containing the symbol @racket['bad-result] and then
+  a FailCode (definition below), or as a list containing the symbol
+  @racket['bad-status] and then a SolutionStatus (also defined below).
 
   @codeblock|{
   ;; A FailCode indicates why the solver did not return a solution.
@@ -154,6 +156,15 @@ constraint? = (pair/c symbol? lin-comb?)]
      'GLP_ERANGE  ;; result out of range
      ))
 }|
+
+  @codeblock|{
+(define-type SolutionStatus
+  (U 'GLP_UNDEF
+     'GLP_FEAS
+     'GLP_INFEAS
+     'GLP_NOFEAS
+     'GLP_OPT
+     'GLP_UNBND))}|
 
   Yikes! Let's see an example.
 
@@ -307,5 +318,19 @@ the chickens get bread, 10 of the chickens get pickles.
 
 Nifty!
 
-  
+
+@section[#:tag "err"]{GLPK Error Handling}
+
+EDIT: I'm now aware that GLPK includes a @tt{glp_error_hook} function
+that allows the installation of a hook function that is called before
+the library halts execution; the documentation suggests the use of
+@tt{setjmp/longjmp} to escape if a user wishes not to exit. 
+
+If I understand the internals of Racket correctly, making use of this
+would require separately compiling a C stub that establishes a jump
+buffer and uses setjmp before calling into each GLPK library function.
+This stub would have to be compiled for every platform separately,
+and I frankly don't have enough interest to implement something
+like this now.... Sad face.
+
 }

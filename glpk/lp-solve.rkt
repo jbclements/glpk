@@ -63,6 +63,14 @@
      'GLP_ERANGE  ;; result out of range
      ))
 
+(define-type SolutionStatus
+  (U 'GLP_UNDEF
+     'GLP_FEAS
+     'GLP_INFEAS
+     'GLP_NOFEAS
+     'GLP_OPT
+     'GLP_UNBND))
+
 (define-type BoundsSym (U 'GLP_FR 'GLP_LO 'GLP_UP 'GLP_DB 'GLP_FX))
 
 
@@ -87,6 +95,7 @@
                                           Float Float -> Void)]
                [glp_set_obj_coef (Problem Natural Float -> Void)]
                [glp_simplex (Problem False -> (U 'success FailCode))]
+               [glp_get_status (Problem -> SolutionStatus)]
                [glp_get_obj_val (Problem -> Float)]
                [glp_get_col_prim (Problem Natural -> Float)]
                [M_MAX Natural]
@@ -113,7 +122,9 @@
 ;; linear programming problem as described in glpk.pdf.
 (: lp-solve
    (Objective Direction (Listof Constraint) (Listof Bound)
-              -> (U FailCode Solution)))
+              -> (U (List 'bad-result FailCode)
+                    (List 'bad-status SolutionStatus)
+                    Solution)))
 (define (lp-solve objective direction constraints bounds)
   (unless (< 0 (length constraints) M_MAX)
     (raise-argument-error 'lp-solve
@@ -150,7 +161,7 @@
     (map (λ ([pr : (List Real Symbol)]) : (Pairof Symbol Real)
            (cons (second pr) (first pr)))
          (cdr objective)))
-  (glp_term_out 'GLP_OFF)
+  ;(glp_term_out 'GLP_OFF)
   (define prob (glp_create_prob))
   (glp_set_obj_dir prob
                    (cond [(eq? direction 'max) 'GLP_MAX]
@@ -184,16 +195,21 @@
   (glp-load-matrix prob nonzero-matrix-tuples)
   (match (glp_simplex prob #f)
     ['success
-     (list
-      (glp_get_obj_val prob)
-      (for/list : (Listof (List Symbol Float))
-        ([struct-var (in-list struct-vars)]
-         [i : Natural
-            (ann (in-range 1 (add1 (length struct-vars)))
-                 (Sequenceof Natural))])
-        (list struct-var (glp_get_col_prim prob i))))]
+     (match (glp_get_status prob)
+       ['GLP_OPT
+        (list
+         (glp_get_obj_val prob)
+         (for/list : (Listof (List Symbol Float))
+           ([struct-var (in-list struct-vars)]
+            [i : Natural
+               (ann (in-range 1 (add1 (length struct-vars)))
+                    (Sequenceof Natural))])
+           (list struct-var (glp_get_col_prim prob i))))]
+       [other-status
+        (list 'bad-status other-status)])
+     ]
     [fail-code
-     (cast fail-code FailCode)]))
+     (list 'bad-result (cast fail-code FailCode))]))
 
 ;; given the list of structural variables and a LinearCombination
 ;; (without repeats)
@@ -333,106 +349,7 @@
                   kind
                   other)]))
 
-(module+ test
-  (require typed/rackunit)
-;; example:
-;; 480_csc + 480_cpe          < 8 ;; 8 sections offered
-;; 490_csc + 490_cpe + 490_se < 6 ;; 6 sections offered
-;;           431_cpe + 431_se < 2 ;; 2 sections offered
-;; 480_csc + 490_csc = 10 ;; these students need 10 sections of TE
-;; 480_cpe + 490_cpe + 431_cpe = 2 ;; these need 2 sections of TE
-;; 490_se  + 431_se = 2 ;; these need 2 sections of TE
-;; actually just want a feasible solution...
-  (check-equal?
-   (lp-solve '(0 (1 490_se)) 'max
-             '((480_extra (1 480_csc) (1 480_cpe))
-               (490_extra (1 480_csc) (1 490_cpe) (1 490_se))
-               (431_extra (1 431_cpe) (1 431_se))
-               (csc_tes (1 480_csc) (1 490_csc))
-               (cpe_tes (1 480_cpe) (1 490_cpe) (1 431_cpe))
-               (se_tes (1 490_se) (1 431_se)))
-             '((480_extra 0 8)
-               (490_extra 0 6)
-               (431_extra 0 2)
-               (csc_tes 10 10)
-               (cpe_tes 2 2)
-               (se_tes 2 2)
-               (480_csc 0 posinf) (480_cpe 0 posinf)
-               (490_csc 0 posinf) (490_cpe 0 posinf) (490_se 0 posinf)
-               (431_cpe 0 posinf) (431_se 0 posinf)))
-   '(2.0
-     ((480_csc 4.0)
-      (480_cpe 2.0)
-      (490_cpe 0.0)
-      (490_se 2.0)
-      (431_cpe 0.0)
-      (431_se 0.0)
-      (490_csc 6.0))))
 
-(check-exn #px"duplicate auxiliary variable name: '480_extra"
-           (λ ()
-             (lp-solve '(0 (1 431_se)) 'max
-                       '((480_extra (-1 480_csc) (-1 480_cpe))
-                         (480_extra (-1 480_csc) (-1 490_cpe) (-1 490_se))
-                         (431_extra (-1 431_cpe) (-1 431_se)))
-                       '((480_extra 0 posinf)
-                         (490_extra 0 posinf)
-                         (431_extra 0 posinf)
-                         (480_csc 0 posinf) (480_cpe 0 posinf)
-                         (490_csc 0 posinf) (490_cpe 0 posinf) (490_se 0 posinf)
-                         (431_cpe 0 posinf) (431_se 0 posinf)))))
-
-  (check-exn #px"auxiliary variables.*appear in the RHS of some con"
-             (λ ()
-               (lp-solve '(0 (1 431_se)) 'max
-                         '((480_extra (-1 480_csc) (-1 480_cpe))
-                           (490_extra (-1 480_csc) (-1 490_cpe) (-1 490_se))
-                           (431_extra (-1 431_cpe) (-1 431_se)
-                                      (3 490_extra)))
-                         '((480_extra 0 posinf)
-                           (490_extra 0 posinf)
-                           (431_extra 0 posinf)
-                           (480_csc 0 posinf) (480_cpe 0 posinf)
-                           (490_csc 0 posinf) (490_cpe 0 posinf) (490_se 0 posinf)
-                           (431_cpe 0 posinf) (431_se 0 posinf)))))
-
-  (check-exn #px"variables.*have no provided bounds"
-             (λ ()
-               (lp-solve '(0 (1 431_se)) 'max
-                         '((480_extra (-1 480_csc) (-1 480_cpe))
-                           (490_extra (-1 480_csc) (-1 490_cpe) (-1 490_se))
-                           (431_extra (-1 431_cpe) (-1 431_se)))
-                         '((480_extra 0 posinf)
-                           (490_extra 0 posinf)
-                           (480_csc 0 posinf) (480_cpe 0 posinf)
-                           (490_csc 0 posinf) (490_cpe 0 posinf) (490_se 0 posinf)
-                           (431_cpe 0 posinf) (431_se 0 posinf)))))
-
-  (check-exn
-   #px"variables.*in objective fn are not constrained"
-   (λ ()
-     (lp-solve '(0 (1 ZZZ)) 'max
-               '((480_extra (-1 480_csc) (-1 480_cpe))
-                 (490_extra (-1 480_csc) (-1 490_cpe) (-1 490_se))
-                 (431_extra (-1 431_cpe) (-1 431_se)))
-               '((480_extra 0 posinf)
-                 (490_extra 0 posinf)
-                 (431_extra 0 posinf)
-                 (480_csc 0 posinf) (480_cpe 0 posinf)
-                 (490_csc 0 posinf) (490_cpe 0 posinf) (490_se 0 posinf)
-                 (431_cpe 0 posinf) (431_se 0 posinf)))))
-
-  (check-exn
-   #px"list of constraints with length in"
-   (λ ()
-     (lp-solve '(0 (1 480_extra)) 'max
-               '()
-               '((480_extra 0 posinf)
-                 (490_extra 0 posinf)
-                 (431_extra 0 posinf)
-                 (480_csc 0 posinf) (480_cpe 0 posinf)
-                 (490_csc 0 posinf) (490_cpe 0 posinf) (490_se 0 posinf)
-                 (431_cpe 0 posinf) (431_se 0 posinf))))))
 
 
 
