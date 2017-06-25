@@ -152,7 +152,7 @@
   (define optimized-vars (map (inst second Any Symbol Any)
                               (cdr objective)))
   (check-all-present optimized-vars struct-vars
-                     "variables ~e in objective fn are not constrained")
+                     "variables ~e in objective fn are not structural")
   (ensure-distinct
    "objective"
    (map (inst cadr Any Symbol Any) (cdr objective)))
