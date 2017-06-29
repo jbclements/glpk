@@ -161,7 +161,7 @@
     (map (λ ([pr : (List Real Symbol)]) : (Pairof Symbol Real)
            (cons (second pr) (first pr)))
          (cdr objective)))
-  ;(glp_term_out 'GLP_OFF)
+  (glp_term_out 'GLP_OFF)
   (define prob (glp_create_prob))
   (glp_set_obj_dir prob
                    (cond [(eq? direction 'max) 'GLP_MAX]
