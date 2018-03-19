@@ -93,7 +93,7 @@ An example appears below.
  form:
 
  @racketblock[
-lin-comb? = (listof (list/c symbol? real?))]
+lin-comb? = (listof (list/c real? symbol?))]
 
  ... representing a linear combination of structural variables.
 
