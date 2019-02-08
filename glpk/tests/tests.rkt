@@ -77,7 +77,7 @@
                            (431_cpe 0 posinf) (431_se 0 posinf)))))
 
   (check-exn
-   #px"variables.*in objective fn are not constrained"
+   #px"variables.*in objective fn are not structural"
    (λ ()
      (lp-solve '(0 (1 ZZZ)) 'max
                '((480_extra (-1 480_csc) (-1 480_cpe))
