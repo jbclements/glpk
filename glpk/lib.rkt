@@ -52,6 +52,12 @@
 (define-glpk glp_delete_prob (_fun _PROB-pointer -> _void)
   #:wrap (deallocator))
 
+;; must appear early as well
+(define _glp_on_off (_enum '(GLP_OFF
+                             GLP_ON)
+                           _int))
+
+
 ;; WOW! there are some unusual things about this API. You should
 ;; definitely read the docs (glpk.pdf) before trying to modify
 ;; this. Exhibit A: it actually uses C arrays with 1-based indexing,
@@ -110,6 +116,11 @@
 ;;;#define GLP_CV             1  /* continuous variable */
 ;;;#define GLP_IV             2  /* integer variable */
 ;;;#define GLP_BV             3  /* binary variable */
+
+;; for use with mixed integer programming:
+(define _var-kind (_enum '(GLP_CV = 1
+                           GLP_IV
+                           GLP_BV)))
 ;;;
 ;;;/* type of auxiliary/structural variable: */
 ;;;#define GLP_FR             1  /* free (unbounded) variable */
@@ -210,7 +221,7 @@
                            [tm_lim _int]
                            [out_frq _int]
                            [out_dly _int]
-                           [presolve _int]
+                           [presolve _glp_on_off]
                            [foo_bar (_array _double 36)]
                            ))
 ;;;typedef struct
@@ -316,6 +327,63 @@
 ;;;#endif
 ;;;      double foo_bar[23];     /* (reserved) */
 ;;;} glp_iocp;
+
+
+(define-cstruct _glp_iocp ([msg_lev (_enum '(GLP_MSG_OFF
+                                             GLP_MSG_ERR
+                                             GLP_MSG_ON
+                                             GLP_MSG_ALL
+                                             GLP_MSG_DEBUG)
+                                           _int)]
+                           [br_tech (_enum '(GLP_BR_FFV = 1
+                                             GLP_BR_LFV
+                                             GLP_BR_MFV
+                                             GLP_BR_DTH
+                                             GLP_BR_PCH)
+                                           _int)]
+                           [bt_tech (_enum '(GLP_BT_DFS = 1
+                                             GLP_BT_BFS
+                                             GLP_BT_BLB
+                                             GLP_BT_BPH)
+                                           _int)]
+                           [tol_int _double]
+                           [tol_obj _double]
+                           [tm_lim  _int]
+                           [out_frq _int]
+                           [out_dly _int]
+                           ;; scary, I'm punting on this function pointer
+                           ;; void (*cb_func)(glp_tree *T, void *info);
+                           [cb_func _pointer]
+                           [cb_info _pointer]
+                           [cb_size _int]
+                           [pp_tech (_enum '(GLP_PP_NONE
+                                             GLP_PP_ROOT
+                                             GLP_PP_ALL)
+                                     _int)]
+                           [mip_gap _double]
+                           [mir_cuts _int]
+                           [gmi_cuts _int]
+                           [cov_cuts _int]
+                           [clq_cuts _int]
+                           [presolve _glp_on_off]
+                           [binarize _int]
+                           [fp_heur _int]
+                           [ps_heur _int]
+                           [ps_tm_lim _int]
+                           [sr_heur _int]
+                           [use_sol _int]
+                           ;; since we're allocating these ourselves, this
+                           ;; could cause a problem, since it would presumably
+                           ;; be a pointer to GC-managed memory, which is
+                           ;; a no-no. Passing #f should avoid the problem.
+                           [save_sol _pointer #;_string/utf-8]
+                           [alien _int]
+                           [flip _int]
+                           ;; this is just padding for future values
+                           [foo_bar (_array/vector _double 23)])
+  #:malloc-mode 'atomic)
+
+
 ;;;
 ;;;typedef struct
 ;;;{     /* additional row attributes */
@@ -336,14 +404,13 @@
 ;;;      /* (reserved) */
 ;;;} glp_attr;
 ;;;
-
-(define _glp_on_off (_enum '(GLP_OFF
-                             GLP_ON)
-                           _int))
 ;;;/* enable/disable flag: */
 ;;;#define GLP_ON             1  /* enable something */
 ;;;#define GLP_OFF            0  /* disable something */
 ;;;
+
+;; defined above, for order-of-evaluation issues
+
 ;;;/* reason codes: */
 ;;;#define GLP_IROWGEN     0x01  /* request for row generation */
 ;;;#define GLP_IBINGO      0x02  /* better integer solution found */
@@ -729,6 +796,9 @@
 ;;;
 ;;;void glp_set_col_kind(glp_prob *P, int j, int kind);
 ;;;/* set (change) column kind */
+
+(define-glpk glp_set_col_kind (_fun _PROB-pointer _int _var-kind -> _void))
+
 ;;;
 ;;;int glp_get_col_kind(glp_prob *P, int j);
 ;;;/* retrieve column kind */
@@ -741,22 +811,37 @@
 ;;;
 ;;;int glp_intopt(glp_prob *P, const glp_iocp *parm);
 ;;;/* solve MIP problem with the branch-and-bound method */
+
+(define-glpk glp_intopt (_fun _PROB-pointer _glp_iocp-pointer -> _resultcode))
+
 ;;;
 ;;;void glp_init_iocp(glp_iocp *parm);
 ;;;/* initialize integer optimizer control parameters */
+
+(define-glpk glp_init_iocp (_fun _glp_iocp-pointer -> _void))
+
 ;;;
 ;;;int glp_mip_status(glp_prob *P);
 ;;;/* retrieve status of MIP solution */
 ;;;
+
+(define-glpk glp_mip_status (_fun _PROB-pointer -> _solution-status))
+
 ;;;double glp_mip_obj_val(glp_prob *P);
 ;;;/* retrieve objective value (MIP solution) */
 ;;;
+
+(define-glpk glp_mip_obj_val(_fun _PROB-pointer -> _double))
+
 ;;;double glp_mip_row_val(glp_prob *P, int i);
 ;;;/* retrieve row value (MIP solution) */
 ;;;
 ;;;double glp_mip_col_val(glp_prob *P, int j);
 ;;;/* retrieve column value (MIP solution) */
 ;;;
+
+(define-glpk glp_mip_col_val (_fun _PROB-pointer _int -> _double))
+
 ;;;void glp_check_kkt(glp_prob *P, int sol, int cond, double *ae_max,
 ;;;      int *ae_ind, double *re_max, int *re_ind);
 ;;;/* check feasibility/optimality conditions */
@@ -1358,3 +1443,61 @@
 ;;;#endif
 ;;;
 ;;;/* eof */
+
+;; UTILITY
+
+;; putting this init code on the other side of the typed/untyped
+;; boundary requires assembling a massive type in the required/typed
+;; interface, it's easier to put it here.
+
+
+;; create and initialize an iocp-pointer
+(define (make-iocp)
+  ;; these values are designed to allow us to detect uninitialized
+  ;; fields, essentially. Experiments suggest that all of these
+  ;; will be changed, except the pointer fields
+  (define my-iocp
+    (make-glp_iocp
+     'GLP_MSG_DEBUG
+     'GLP_BR_MFV
+     'GLP_BT_BFS
+     (+ background-double 10.0)
+     (+ background-double 11.0)
+     283014
+     283015
+     283016
+     #f
+     #f
+     283017
+     'GLP_PP_ROOT
+     (+ background-double 12.0)
+     283018
+     283019
+     283020
+     283021
+     'GLP_ON
+     283023
+     283024
+     283025
+     283026
+     283027
+     283028
+     #f
+     283029
+     283030
+     ;; this is just padding for future values
+     iocp-padding))
+  (glp_init_iocp my-iocp)
+  my-iocp)
+
+
+;; this is like #xdeadbeef; it's arbitrary but fixed.
+;; if this number plus an integer crops up, you know
+;; it's uninitialized data.
+(define background-double 0.147104374)
+
+(define (make-double-padding n)
+  (build-vector n (λ (i) (+ background-double i))))
+
+;; this predefined vector makes it a tiny bit easier to declare 
+(define iocp-padding (make-double-padding 23))

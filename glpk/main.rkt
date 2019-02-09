@@ -2,4 +2,4 @@
 
 (require "lp-solve.rkt")
 
-(provide lp-solve)
+(provide (all-from-out "lp-solve.rkt"))

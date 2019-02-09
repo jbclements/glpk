@@ -12,30 +12,31 @@
 ;; 490_se  + 431_se = 2 ;; these need 2 sections of TE
 ;; actually just want a feasible solution...
   (check-equal?
-   (lp-solve '(0 (1 490_se)) 'max
-             '((480_extra (1 480_csc) (1 480_cpe))
-               (490_extra (1 480_csc) (1 490_cpe) (1 490_se))
-               (431_extra (1 431_cpe) (1 431_se))
+   (lp-solve '(0) 'max
+             '((480_total (1 480_csc) (1 480_cpe))
+               (490_total (1 490_csc) (1 490_cpe) (1 490_se))
+               (431_total (1 431_cpe) (1 431_se))
                (csc_tes (1 480_csc) (1 490_csc))
                (cpe_tes (1 480_cpe) (1 490_cpe) (1 431_cpe))
                (se_tes (1 490_se) (1 431_se)))
-             '((480_extra 0 8)
-               (490_extra 0 6)
-               (431_extra 0 2)
+             '((480_total 0 8)
+               (490_total 0 6)
+               (431_total 0 2)
                (csc_tes 10 10)
                (cpe_tes 2 2)
                (se_tes 2 2)
                (480_csc 0 posinf) (480_cpe 0 posinf)
                (490_csc 0 posinf) (490_cpe 0 posinf) (490_se 0 posinf)
                (431_cpe 0 posinf) (431_se 0 posinf)))
-   '(2.0
-     ((480_csc 4.0)
-      (480_cpe 2.0)
-      (490_cpe 0.0)
-      (490_se 2.0)
-      (431_cpe 0.0)
-      (431_se 0.0)
-      (490_csc 6.0))))
+   ;; this is the one generated, hand-checked that it's feasible:
+   '(0.0
+    ((480_csc 8.0)
+     (480_cpe 0.0)
+     (490_csc 2.0)
+     (490_cpe 2.0)
+     (490_se 2.0)
+     (431_cpe 0.0)
+     (431_se 0.0))))
 
 (check-exn #px"duplicate auxiliary variable name: '480_extra"
            (λ ()
@@ -114,5 +115,74 @@
   '((sum 0 1)
     (x 5 posinf)
     (y 7 posinf)))
- '(bad-status GLP_NOFEAS)))
+ '(bad-status GLP_NOFEAS))
+
+(define (simple-sum [clause : (List Symbol (Listof Symbol))]) : Constraint
+  (match clause
+    [(list tgt sum-of)
+     (cons tgt (map (λ ([var : Symbol]) ;; : (List Real Symbol)
+                      (list 1 var))
+                    sum-of))]))
+
+(define (simple-sums [clauses : (Listof (List Symbol (Listof Symbol)))])
+  (map simple-sum clauses))
+
+(check-equal?
+ (simple-sums
+  '((csc101-offered (bogus1-csc101 bogus2-csc101))))
+ '((csc101-offered (1 bogus1-csc101) (1 bogus2-csc101))))
+  
+;; bogus1-csc101 + bogus2-csc101 > 4.5
+;; bogus1-csc202 + bogus2-csc202 > 4.5
+;; bogus1-csc101 + bogus1-csc202 = 4
+;; bogus2-csc101 + bogus2-csc202 = 5
+(check-equal?
+ (mip-solve '(0) 'max
+            (simple-sums
+             '((csc101-offered (bogus1-csc101 bogus2-csc101))
+               (csc202-offered (bogus1-csc202 bogus2-csc202))
+               (bogus1-secns (bogus1-csc101 bogus1-csc202))
+               (bogus2-secns (bogus2-csc101 bogus2-csc202))))
+            '((csc101-offered 4.5 posinf)
+              (csc202-offered 4.5 posinf)
+              (bogus1-secns 4 4)
+              (bogus2-secns 5 5)
+              (bogus1-csc101 0 posinf)
+              (bogus1-csc202 0 posinf)
+              (bogus2-csc101 0 posinf)
+              (bogus2-csc202 0 posinf))
+            '(bogus1-csc101 bogus1-csc202
+                            bogus2-csc101 bogus2-csc202))
+ '(bad-result GLP_ENOPFS))
+
+  (check-equal?
+ (mip-solve '(0 (1 bogus1-extra) (1 bogus2-extra)) 'max
+            (simple-sums
+             '((csc101-offered (bogus1-csc101 bogus2-csc101))
+               (csc202-offered (bogus1-csc202 bogus2-csc202))
+               (bogus1-secns (bogus1-csc101 bogus1-csc202 bogus1-extra))
+               (bogus2-secns (bogus2-csc101 bogus2-csc202 bogus2-extra))))
+            '((csc101-offered 4.5 posinf)
+              (csc202-offered 4.5 posinf)
+              (bogus1-secns 5 5)
+              (bogus2-secns 5 5)
+              (bogus1-csc101 0 posinf)
+              (bogus1-csc202 0 posinf)
+              (bogus1-extra 0 posinf)
+              (bogus2-csc101 0 posinf)
+              (bogus2-csc202 0 posinf)
+              (bogus2-extra 0 posinf))
+            '(bogus1-csc101 bogus1-csc202
+                            bogus2-csc101 bogus2-csc202))
+ ;; regression, there are many correct answers:
+ '(0.0
+   ((bogus1-csc101 0.0)
+    (bogus2-csc101 5.0)
+    (bogus1-csc202 5.0)
+    (bogus2-csc202 0.0)
+    (bogus1-extra 0.0)
+    (bogus2-extra 0.0))))
+
+
+  )
 

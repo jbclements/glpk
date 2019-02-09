@@ -1,6 +1,9 @@
 #lang racket
 
-(require "lib.rkt"
+;; this is a translation of the sample code given in the GLPK documentation, used while figuring things
+;; out for the first time. Probably safe to delete it? Might be useful, I suppose
+
+(require "../lib.rkt"
          ffi/unsafe)
 
 (glp_term_out 'GLP_OFF)

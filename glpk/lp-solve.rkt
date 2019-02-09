@@ -1,6 +1,18 @@
 #lang typed/racket/base
 
-(provide lp-solve)
+(provide lp-solve
+         mip-solve
+
+         Objective
+         Direction
+         Constraint
+         Bound
+         LoBound
+         HiBound
+         LinearCombination
+         Solution
+         FailCode
+         SolutionStatus)
 
 ;; this formulation of the problem comes from glpk.pdf. You need
 ;; to express your problem using this formulation.
@@ -74,10 +86,15 @@
 (define-type BoundsSym (U 'GLP_FR 'GLP_LO 'GLP_UP 'GLP_DB 'GLP_FX))
 
 
-(require (only-in typed/racket/unsafe unsafe-require/typed))
+(require (only-in typed/racket/unsafe unsafe-require/typed)
+         racket/list)
+
+(require/typed racket/list
+               [index-of ((Listof Any) Any -> (U Natural False))])
 
 (unsafe-require/typed "lib.rkt"
-               [#:opaque Problem glpk-problem?])
+               [#:opaque Problem glpk-problem?]
+               [#:opaque Iocp glp_iocp?])
 
 (require/typed "lib.rkt"
                [glp_term_out ((U 'GLP_ON 'GLP_OFF) -> Symbol)]
@@ -104,6 +121,15 @@
                [glp-load-matrix (Problem (Listof
                                           (List Natural Natural Flonum))
                                          -> Void)]
+               
+               [make-iocp (-> Iocp)]
+               [set-glp_iocp-presolve! (Iocp (U 'GLP_ON 'GLP_OFF)
+                                             -> Void)]
+               [glp_intopt (Problem Iocp -> (U 'success FailCode))]
+               [glp_mip_status (Problem -> SolutionStatus)]
+               [glp_mip_obj_val (Problem -> Float)]
+               [glp_mip_col_val (Problem Integer -> Float)]
+               [glp_set_col_kind (Problem Integer (U 'GLP_CV 'GLP_IV 'GLP_BV) -> Void)]
                )
 
 (require (only-in racket/list
@@ -118,26 +144,97 @@
                   list->set
                   set-empty?))
 
+#;(U (List 'bad-result FailCode)
+                    (List 'bad-status SolutionStatus)
+                    Solution)
 ;; the type for lp-solve is derived from the formulation of the
 ;; linear programming problem as described in glpk.pdf.
+
+
 (: lp-solve
    (Objective Direction (Listof Constraint) (Listof Bound)
               -> (U (List 'bad-result FailCode)
                     (List 'bad-status SolutionStatus)
                     Solution)))
 (define (lp-solve objective direction constraints bounds)
-  (unless (< 0 (length constraints) M_MAX)
-    (raise-argument-error 'lp-solve
-                          "list of constraints with length in 1..M_MAX"
-                          2 objective direction constraints bounds))
-  (define aux-vars (map (ann car (Constraint -> Symbol))
-                        constraints))
-  (ensure-distinct "auxiliary" aux-vars)
+  (define ps (problem-setup objective direction constraints bounds))
+  (define struct-vars (car ps))
+  (define prob (cadr ps))
+  (match (glp_simplex prob #f)
+    ['success
+     (match (glp_get_status prob)
+       ['GLP_OPT
+        (list
+         (glp_get_obj_val prob)
+         (for/list : (Listof (List Symbol Float))
+           ([struct-var (in-list struct-vars)]
+            [i : Natural
+               (ann (in-range 1 (add1 (length struct-vars)))
+                    (Sequenceof Natural))])
+           (list struct-var (glp_get_col_prim prob i))))]
+       [other-status
+        (list 'bad-status other-status)])]
+    [fail-code
+     (list 'bad-result (cast fail-code FailCode))]))
+
+
+(: mip-solve
+   (Objective Direction (Listof Constraint) (Listof Bound) (Listof Symbol)
+              -> (U (List 'bad-result FailCode)
+                    (List 'bad-status SolutionStatus)
+                    Solution)))
+(define (mip-solve objective direction constraints bounds integer-vars)
+  (match-define (list struct-vars prob)
+    (problem-setup objective direction constraints bounds))
+  (define integer-var-indices
+    (for/list : (Listof Natural) ([s (in-list integer-vars)])
+      (define idx (index-of struct-vars s))
+      (cond [(not idx) (error 'mip-solve
+                              "expected integer var to be one of the structural vars, got: ~v\n"
+                              s)]
+            ;; indexes in GLPK are 1-based:
+            [else (add1 idx)])))
+  (for ([s (in-list integer-vars)])
+    (unless (member s struct-vars)
+      (raise-argument-error 'mip-solve "integer_vars subset of structural vars"
+                            4 objective direction constraints bounds integer-vars)))
+  (define the-iocp (make-iocp))
+  ;; this *looks* like the right choice, sigh.... not sure, though.
+  (set-glp_iocp-presolve! the-iocp 'GLP_ON)
+  (for ([idx (in-list integer-var-indices)])
+    (glp_set_col_kind prob idx 'GLP_IV))
+  (match (glp_intopt prob the-iocp)
+    ['success
+     (match (glp_mip_status prob)
+       ['GLP_OPT
+        (list
+         (glp_mip_obj_val prob)
+         (for/list : (Listof (List Symbol Float))
+           ([struct-var (in-list struct-vars)]
+            [i : Natural
+               (ann (in-range 1 (add1 (length struct-vars)))
+                    (Sequenceof Natural))])
+           (list struct-var (glp_mip_col_val prob i))))]
+       [other-status
+        (list 'bad-status other-status)])]
+    [fail-code
+     (list 'bad-result (cast fail-code FailCode))]))
+
+(: problem-setup
+     (Objective Direction (Listof Constraint) (Listof Bound)
+                -> (List (Listof Symbol) Problem)))
+(define (problem-setup objective direction constraints bounds)
+  (define aux-vars (map (inst car Symbol) constraints))
   (define struct-vars (remove-duplicates
                        (apply
                         append
                         (map constraint-rhs-vars
                              constraints))))
+  (unless (< 0 (length constraints) M_MAX)
+    (raise-argument-error 'lp-solve
+                          "list of constraints with length in 1..M_MAX"
+                          2 objective direction constraints bounds))
+  (ensure-distinct "auxiliary" aux-vars)
   (unless (< 0 (length struct-vars) N_MAX)
     (raise-argument-error
      'lp-solve
@@ -193,23 +290,8 @@
     (error 'lp-solve
            "problem has more than NNZ_MAX nonzero constraint coefficients"))
   (glp-load-matrix prob nonzero-matrix-tuples)
-  (match (glp_simplex prob #f)
-    ['success
-     (match (glp_get_status prob)
-       ['GLP_OPT
-        (list
-         (glp_get_obj_val prob)
-         (for/list : (Listof (List Symbol Float))
-           ([struct-var (in-list struct-vars)]
-            [i : Natural
-               (ann (in-range 1 (add1 (length struct-vars)))
-                    (Sequenceof Natural))])
-           (list struct-var (glp_get_col_prim prob i))))]
-       [other-status
-        (list 'bad-status other-status)])
-     ]
-    [fail-code
-     (list 'bad-result (cast fail-code FailCode))]))
+  (list struct-vars prob))
+
 
 ;; given the list of structural variables and a LinearCombination
 ;; (without repeats)
@@ -348,6 +430,7 @@
                   "duplicate ~a variable name: ~e"
                   kind
                   other)]))
+
 
 
 
