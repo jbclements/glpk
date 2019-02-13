@@ -1490,6 +1490,13 @@
   (glp_init_iocp my-iocp)
   my-iocp)
 
+;; here are the observed default values for the glp_iocp, as of 2019-02-12:
+#;'(GLP_MSG_ALL GLP_BR_DTH GLP_BT_BLB 1e-05 1e-07 2147483647 5000 10000 #f
+                #f 0 GLP_PP_ALL 0.0 0 0 0 0 GLP_OFF 0 0 0 60000 1 0 #f 0 1
+                ;; ... omitting the uninitialized values vector.
+                )
+
+
 
 ;; this is like #xdeadbeef; it's arbitrary but fixed.
 ;; if this number plus an integer crops up, you know

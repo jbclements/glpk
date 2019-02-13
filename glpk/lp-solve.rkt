@@ -125,6 +125,7 @@
                [make-iocp (-> Iocp)]
                [set-glp_iocp-presolve! (Iocp (U 'GLP_ON 'GLP_OFF)
                                              -> Void)]
+               [set-glp_iocp-tm_lim! (Iocp Integer -> Void)]
                [glp_intopt (Problem Iocp -> (U 'success FailCode))]
                [glp_mip_status (Problem -> SolutionStatus)]
                [glp_mip_obj_val (Problem -> Float)]
@@ -153,11 +154,12 @@
 
 (: lp-solve
    (Objective Direction (Listof Constraint) (Listof Bound)
+              [#:terminal-output Boolean]
               -> (U (List 'bad-result FailCode)
                     (List 'bad-status SolutionStatus)
                     Solution)))
-(define (lp-solve objective direction constraints bounds)
-  (define ps (problem-setup objective direction constraints bounds))
+(define (lp-solve objective direction constraints bounds #:terminal-output [term-out? #f])
+  (define ps (problem-setup objective direction constraints bounds term-out?))
   (define struct-vars (car ps))
   (define prob (cadr ps))
   (match (glp_simplex prob #f)
@@ -177,15 +179,19 @@
     [fail-code
      (list 'bad-result (cast fail-code FailCode))]))
 
-
+;; perform a mixed-integer programming (MIP) solve:
 (: mip-solve
    (Objective Direction (Listof Constraint) (Listof Bound) (Listof Symbol)
-              -> (U (List 'bad-result FailCode)
+              [#:terminal-output Boolean]
+              [#:time-limit (U False Natural)]
+              -> (U (List 'bad-result FailCode (U False Solution))
                     (List 'bad-status SolutionStatus)
                     Solution)))
-(define (mip-solve objective direction constraints bounds integer-vars)
+(define (mip-solve objective direction constraints bounds integer-vars
+                   #:terminal-output [term-out? #f]
+                   #:time-limit [time-limit #f])
   (match-define (list struct-vars prob)
-    (problem-setup objective direction constraints bounds))
+    (problem-setup objective direction constraints bounds term-out?))
   (define integer-var-indices
     (for/list : (Listof Natural) ([s (in-list integer-vars)])
       (define idx (index-of struct-vars s))
@@ -201,29 +207,40 @@
   (define the-iocp (make-iocp))
   ;; this *looks* like the right choice, sigh.... not sure, though.
   (set-glp_iocp-presolve! the-iocp 'GLP_ON)
+  (when time-limit
+    (set-glp_iocp-tm_lim! the-iocp time-limit))
   (for ([idx (in-list integer-var-indices)])
     (glp_set_col_kind prob idx 'GLP_IV))
-  (match (glp_intopt prob the-iocp)
-    ['success
-     (match (glp_mip_status prob)
-       ['GLP_OPT
-        (list
-         (glp_mip_obj_val prob)
-         (for/list : (Listof (List Symbol Float))
-           ([struct-var (in-list struct-vars)]
-            [i : Natural
-               (ann (in-range 1 (add1 (length struct-vars)))
-                    (Sequenceof Natural))])
-           (list struct-var (glp_mip_col_val prob i))))]
-       [other-status
-        (list 'bad-status other-status)])]
-    [fail-code
-     (list 'bad-result (cast fail-code FailCode))]))
+  (define result (glp_intopt prob the-iocp))
+  (cond [(eq? result 'success)
+         (match (glp_mip_status prob)
+           ['GLP_OPT
+            (extract-solution prob struct-vars)]
+           [other-status
+            (list 'bad-status other-status)])]
+        [else
+         (match result
+           ;; in the case of timeout, we might have a useful solution?
+           ['GLP_ETMLIM
+            (list 'bad-result result (extract-solution prob struct-vars))]
+           [other
+            (list 'bad-result result #f)])]))
+
+;; extract the solution from the problem pointer
+(define (extract-solution [prob : Problem] [struct-vars : (Listof Symbol)]) : Solution
+  (list
+   (glp_mip_obj_val prob)
+   (for/list : (Listof (List Symbol Float))
+     ([struct-var (in-list struct-vars)]
+      [i : Natural
+         (ann (in-range 1 (add1 (length struct-vars)))
+              (Sequenceof Natural))])
+     (list struct-var (glp_mip_col_val prob i)))))
 
 (: problem-setup
-     (Objective Direction (Listof Constraint) (Listof Bound)
+     (Objective Direction (Listof Constraint) (Listof Bound) Boolean
                 -> (List (Listof Symbol) Problem)))
-(define (problem-setup objective direction constraints bounds)
+(define (problem-setup objective direction constraints bounds term-on?)
   (define aux-vars (map (inst car Symbol) constraints))
   (define struct-vars (remove-duplicates
                        (apply
@@ -258,7 +275,7 @@
     (map (λ ([pr : (List Real Symbol)]) : (Pairof Symbol Real)
            (cons (second pr) (first pr)))
          (cdr objective)))
-  (glp_term_out 'GLP_OFF)
+  (glp_term_out (if term-on? 'GLP_ON 'GLP_OFF))
   (define prob (glp_create_prob))
   (glp_set_obj_dir prob
                    (cond [(eq? direction 'max) 'GLP_MAX]
