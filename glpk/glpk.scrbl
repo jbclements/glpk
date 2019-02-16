@@ -32,9 +32,10 @@ Here's a list, taken from the GLPK documentation:
 @item{    branch-and-cut method}
 @item{    translator for GNU MathProg} ]
 
-Right now, this library does not support any of those bells and whistles;
-it just allows basic primal simplex solving. It wouldn't be hard to extend
-this library on an as-needed basis.
+Right now, this library supports two of these modes: basic primal simplex
+solving, and mixed integer programming (MIP) using the branch-and-cut method.
+It's not hard to extend this library on an as-needed basis, to support more
+of GLPK's functionality.
 
 It's worth mentioning that GLPK does have one "interesting" design
 choice; when you supply arguments to GLPK that don't make sense—for
@@ -47,6 +48,11 @@ I believe I have designed and implemented the
 @racket[lp-solve] function in such a way that this should not
 be possible. Nevertheless, it's something that users of the library
 should be aware of. [See section @secref["err"]
+
+@section{Typed Racket}
+
+The outward-facing modules of this library are written using Typed
+Racket, and should play nicely with the rest of your Typed Racket code.
 
 @section{The Linear Programming problem}
 
@@ -82,11 +88,14 @@ An example appears below.
 
 @defmodule[glpk]
 
-@defproc[(lp-solve [objective objective?] [direction (or/c 'max 'min)]
+@defproc[(lp-solve [objective objective?]
+                   [direction (or/c 'max 'min)]
                    [constraints (listof constraint?)]
-                   [bounds (listof bound?)])
-         (or/c (list/c flonum? (listof (list/c symbol? flonum?)))
-               (List symbol? symbol?))]{
+                   [bounds (listof bound?)]
+                   [#:terminal-output terminal-output? boolean?])
+         (list/c symbol?
+                 (or/c symbol? false?)
+                 (list/c flonum? (listof (list/c symbol? flonum?))))]{
  Solves a linear programming problem.
 
  Both the objective and the constraints make use of a "linear combination"
@@ -124,47 +133,26 @@ constraint? = (pair/c symbol? lin-comb?)]
  lo-bound? = (or/c 'neginf real?)
  hi-bound? = (or/c 'posinf real?)]
 
-  The result is a list containing the maximal (or minimal) value of
-  the objective function, along with a list of lists mapping structural
-  variables to the values that produce that optimal value, unless
-  no solution is possible. There are two ways that this can be signalled;
-  either as a list containing the symbol @racket['bad-result] and then
-  a FailCode (definition below), or as a list containing the symbol
-  @racket['bad-status] and then a SolutionStatus (also defined below).
+  You may specify @racket[#:terminal-output] as @racket[true] to obtain
+  output on (yes actually) stdout. This is included for completeness, but
+  is generally more useful in mixed integer programming, described below.
 
-  @codeblock|{
-  ;; A FailCode indicates why the solver did not return a solution.
-(define-type FailCode
-  (U 'GLP_EBADB   ;; invalid basis
-     'GLP_ESING   ;; singular matrix
-     'GLP_ECOND   ;; ill-conditioned matrix
-     'GLP_EBOUND  ;; invalid bounds
-     'GLP_EFAIL   ;; solver failed
-     'GLP_EOBJLL  ;; objective lower limit reached
-     'GLP_EOBJUL  ;; objective upper limit reached
-     'GLP_EITLIM  ;; iteration limit exceeded
-     'GLP_ETMLIM  ;; time limit exceeded
-     'GLP_ENOPFS  ;; no primal feasible solution
-     'GLP_ENODFS  ;; no dual feasible solution
-     'GLP_EROOT   ;; root LP optimum not provided
-     'GLP_ESTOP   ;; search terminated by application
-     'GLP_EMIPGAP ;; relative mip gap tolerance reached
-     'GLP_ENOFEAS ;; no primal/dual feasible solution
-     'GLP_ENOCVG  ;; no convergence
-     'GLP_EINSTAB ;; numerical instability
-     'GLP_EDATA   ;; invalid data
-     'GLP_ERANGE  ;; result out of range
-     ))
-}|
+ The result is a list containing a symbol that indicates either success
+ (@racket['good]) or one of two kinds of failure, and then a symbol which
+ in case of failure conveys information about the nature of the failure,
+ and then either a solution or false. The reason for this "flattened"
+ structure which can carry both failure and success simultaneously is
+ that for certain kinds of failure in MIP (see below), we wish to provide
+ both failure and a best-so-far solution.
 
-  @codeblock|{
-(define-type SolutionStatus
-  (U 'GLP_UNDEF
-     'GLP_FEAS
-     'GLP_INFEAS
-     'GLP_NOFEAS
-     'GLP_OPT
-     'GLP_UNBND))}|
+ A solution is represented as a list containing the optimal value of
+ the objective function, along with a list of lists mapping structural
+ variables to the values that produce that optimal value.
+
+ When the first symbol in the result is @racket['bad-result], the
+ second element is a @racket[FailCode] (definition below). When the first symbol
+ in the result is @racket['bad-status], the second element is a
+ @racket[SolutionStatus] (also defined below).
 
   Yikes! Let's see an example.
 
@@ -233,7 +221,7 @@ f = a + k + c_b + c_p + c_k
 
 You may not be surprised by the result:
 
-@code|{'(100.0 ((a 0.0) (k 0.0) (cb 30.0) (cp 20.0) (ck 50.0)))}|
+@code|{'(good #f (100.0 ((a 0.0) (k 0.0) (cb 30.0) (cp 20.0) (ck 50.0))))}|
 
 In other words, you can invite a hundred guests, if they're all
 chickens.  Well, that's fine, but what if we decide that kids are
@@ -261,7 +249,7 @@ Here's the call:
 
 ... and the result:
 
-@code|{'(195.0 ((a 10.0) (k 10.0) (cb 0.0) (cp 0.0) (ck 30.0)))}|
+@code|{'(good #f (195.0 ((a 10.0) (k 10.0) (cb 0.0) (cp 0.0) (ck 30.0))))}|
 
 In other words: 10 adults, 10 kids, and a pile of chickens to
 vacuum up the leftover pickles.
@@ -304,19 +292,173 @@ just to get a more interesting result:
 The result:
 
 @codeblock|{
-'(200.0
-  ((a 20.0)
-   (k 0.0)
-   (cb 10.000000000000002)
-   (cp 0.0)
-   (ck 9.999999999999998)
-   (ak 0.0)
-   (ac 20.0)))}|
+'(good
+  #f
+  (200.0
+   ((a 20.0)
+    (k 0.0)
+    (cb 10.000000000000002)
+    (cp 0.0)
+    (ck 9.999999999999998)
+    (ak 0.0)
+    (ac 20.0))))}|
 
 That is: 20 adults, all chaperoning chickens. 10 of
 the chickens get bread, 10 of the chickens get pickles.
 
 Nifty!
+
+
+}
+
+@defproc[(mip-solve [objective objective?]
+                    [direction (or/c 'max 'min)]
+                    [constraints (listof constraint?)]
+                    [bounds (listof bound?)]
+                    [integer-vars (listof symbol?)]
+                    [#:terminal-output terminal-output? boolean?]
+                    [#:time-limit time-limit (or/c false? natural?)])
+         (or/c (list/c symbol?
+                       (or/c symbol? #f)
+                       (or/c (list/c flonum? (listof (list/c symbol? flonum?)))
+                             #f)))]{
+
+Performs mixed-integer programming.
+
+The Mixed-Integer-Programming solver is an extension of the linear programming
+solver, and the problems that it solves are an extension of linear programming problems.
+Specifically, in a mixed integer programming problem, some of the solution variables
+can be labeled as integer variables, whose values must be integers.
+
+This is indicated in the interface using an additional input, a list of structural
+variables whose values must be integers.
+
+Mixed integer programming is ... well, a lot harder than simple linear programming.
+In fact, the first step in MIP is to solve the corresponding linear programming problem,
+where the variables are all allowed to take on non-integer variables. The branch-and-cut
+algorithm then attempts to find a related solution where the specified structural
+variables have integer values.
+
+This problem is NP-hard, so ... it can take a while. This motivates the addition of three
+interface elements. First, the @racket[#:time-limit] argument accepts a number of milliseconds,
+indicating how long to run before giving up. Second (making the previous one useful), the
+result of a timeout includes a "best solution so far" along with the @racket['GLP_ETMLIM]
+failure result. Third, the @racket[#:terminal-output] option is genuinely useful in the
+case of mixed integer programming, because it provides information every few seconds (ten?)
+on the progress of the search; the gap between the best known solution and the best solution
+that might be possible, the number of possibilities left to explore, etc.
+
+Unfortunately, the GLPK library is configured by default to provide this output on stdout,
+which isn't terribly natural for a DrRacket program, since the output appears on the terminal
+that you started from DrRacket... if you actually started DrRacket from a terminal at all.
+
+Fortunately, GLPK provides @racket{glp_term_hook()} for exactly this purpose, so you can
+redirect output to a more sane location.
+
+Unfortunately, I haven't implemented support for this. Sorry!
+
+In fact, I found that I've moved toward running my GLPK MIP problems more or less exclusively
+in the terminal, both in order to see the output and also because interrupting the search
+usually involves some rather violent process actions (control-backslash, for instance).
+
+It would also be great to provide support for the various tuning options for the integer
+solver; I haven't done this, but it would be less than an hour's work; if you need any of
+these, let me know and I'd be happy to add them.
+
+But wait... let's have an example.
+
+@subsection{An Integer Example}
+
+Here's a simple example: we need at least 4.5 sections of csc101 and 202. We have two instructors,
+smith and martinez, each of whom can teach 9 sections. Can we staff both of our classes? Yes.
+
+Here's the call. We're trying to maximize their unused sections:
+
+@codeblock|{
+(mip-solve '(0 (1 smith-extra) (1 martinez-extra)) 'max
+           '((csc101-offered (1 smith-csc101) (1 martinez-csc101))
+             (csc202-offered (1 smith-csc202) (1 martinez-csc202))
+             (smith-secns (1 smith-csc101)
+                          (1 smith-csc202)
+                          (1 smith-extra))
+             (martinez-secns (1 martinez-csc101)
+                             (1 martinez-csc202)
+                             (1 martinez-extra)))
+           '((csc101-offered 4.5 posinf)
+             (csc202-offered 4.5 posinf)
+             (smith-secns 9 9)
+             (martinez-secns 9 9)
+             (smith-csc101 0 posinf)
+             (smith-csc202 0 posinf)
+             (smith-extra 0 posinf)
+             (martinez-csc101 0 posinf)
+             (martinez-csc202 0 posinf)
+             (martinez-extra 0 posinf))
+           '(smith-csc101 smith-csc202
+                          martinez-csc101 martinez-csc202))
+   }|
+
+Here's the solution that GLPK comes up with (one of many possible equivalent
+ones:
+
+@codeblock|{
+'(good
+     #f
+     (8.0
+      ((smith-csc101 4.0)
+       (martinez-csc101 1.0)
+       (smith-csc202 5.0)
+       (martinez-csc202 0.0)
+       (smith-extra 0.0)
+       (martinez-extra 8.0))))
+}|
+
+}
+
+@defidform[#:kind "syntax" FailCode]{
+  A code that indicates the nature of a failure. Defined as follows:
+
+@codeblock|{
+(define-type FailCode
+  (U 'GLP_EBADB   ;; invalid basis
+     'GLP_ESING   ;; singular matrix
+     'GLP_ECOND   ;; ill-conditioned matrix
+     'GLP_EBOUND  ;; invalid bounds
+     'GLP_EFAIL   ;; solver failed
+     'GLP_EOBJLL  ;; objective lower limit reached
+     'GLP_EOBJUL  ;; objective upper limit reached
+     'GLP_EITLIM  ;; iteration limit exceeded
+     'GLP_ETMLIM  ;; time limit exceeded
+     'GLP_ENOPFS  ;; no primal feasible solution
+     'GLP_ENODFS  ;; no dual feasible solution
+     'GLP_EROOT   ;; root LP optimum not provided
+     'GLP_ESTOP   ;; search terminated by application
+     'GLP_EMIPGAP ;; relative mip gap tolerance reached
+     'GLP_ENOFEAS ;; no primal/dual feasible solution
+     'GLP_ENOCVG  ;; no convergence
+     'GLP_EINSTAB ;; numerical instability
+     'GLP_EDATA   ;; invalid data
+     'GLP_ERANGE  ;; result out of range
+     ))
+
+  }|
+
+}
+
+@defidform[SolutionStatus]{
+ A symbol that indicates the status of the solution. Defined as follows:
+                          
+@codeblock|{
+(define-type SolutionStatus
+  (U 'GLP_UNDEF
+     'GLP_FEAS
+     'GLP_INFEAS
+     'GLP_NOFEAS
+     'GLP_OPT
+     'GLP_UNBND))}|
+
+
+}
 
 
 @section[#:tag "err"]{GLPK Error Handling}
@@ -332,5 +474,3 @@ buffer and uses setjmp before calling into each GLPK library function.
 This stub would have to be compiled for every platform separately,
 and I frankly don't have enough interest to implement something
 like this now.... Sad face.
-
-}

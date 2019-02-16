@@ -29,14 +29,16 @@
                (490_csc 0 posinf) (490_cpe 0 posinf) (490_se 0 posinf)
                (431_cpe 0 posinf) (431_se 0 posinf)))
    ;; this is the one generated, hand-checked that it's feasible:
-   '(0.0
-    ((480_csc 8.0)
-     (480_cpe 0.0)
-     (490_csc 2.0)
-     (490_cpe 2.0)
-     (490_se 2.0)
-     (431_cpe 0.0)
-     (431_se 0.0))))
+   '(good
+     #f
+     (0.0
+      ((480_csc 8.0)
+       (480_cpe 0.0)
+       (490_csc 2.0)
+       (490_cpe 2.0)
+       (490_se 2.0)
+       (431_cpe 0.0)
+       (431_se 0.0)))))
 
 (check-exn #px"duplicate auxiliary variable name: '480_extra"
            (λ ()
@@ -115,7 +117,7 @@
   '((sum 0 1)
     (x 5 posinf)
     (y 7 posinf)))
- '(bad-status GLP_NOFEAS))
+ '(bad-status GLP_NOFEAS #f))
 
 (define (simple-sum [clause : (List Symbol (Listof Symbol))]) : Constraint
   (match clause
@@ -153,35 +155,41 @@
               (bogus2-csc202 0 posinf))
             '(bogus1-csc101 bogus1-csc202
                             bogus2-csc101 bogus2-csc202))
- '(bad-result GLP_ENOPFS))
+ '(bad-result GLP_ENOPFS #f))
 
+  
   (check-equal?
- (mip-solve '(0 (1 bogus1-extra) (1 bogus2-extra)) 'max
-            (simple-sums
-             '((csc101-offered (bogus1-csc101 bogus2-csc101))
-               (csc202-offered (bogus1-csc202 bogus2-csc202))
-               (bogus1-secns (bogus1-csc101 bogus1-csc202 bogus1-extra))
-               (bogus2-secns (bogus2-csc101 bogus2-csc202 bogus2-extra))))
-            '((csc101-offered 4.5 posinf)
-              (csc202-offered 4.5 posinf)
-              (bogus1-secns 5 5)
-              (bogus2-secns 5 5)
-              (bogus1-csc101 0 posinf)
-              (bogus1-csc202 0 posinf)
-              (bogus1-extra 0 posinf)
-              (bogus2-csc101 0 posinf)
-              (bogus2-csc202 0 posinf)
-              (bogus2-extra 0 posinf))
-            '(bogus1-csc101 bogus1-csc202
-                            bogus2-csc101 bogus2-csc202))
- ;; regression, there are many correct answers:
- '(0.0
-   ((bogus1-csc101 0.0)
-    (bogus2-csc101 5.0)
-    (bogus1-csc202 5.0)
-    (bogus2-csc202 0.0)
-    (bogus1-extra 0.0)
-    (bogus2-extra 0.0))))
+   (mip-solve '(0 (1 smith-extra) (1 martinez-extra)) 'max
+              '((csc101-offered (1 smith-csc101) (1 martinez-csc101))
+                (csc202-offered (1 smith-csc202) (1 martinez-csc202))
+                (smith-secns (1 smith-csc101)
+                             (1 smith-csc202)
+                             (1 smith-extra))
+                (martinez-secns (1 martinez-csc101)
+                                (1 martinez-csc202)
+                                (1 martinez-extra)))
+              '((csc101-offered 4.5 posinf)
+                (csc202-offered 4.5 posinf)
+                (smith-secns 9 9)
+                (martinez-secns 9 9)
+                (smith-csc101 0 posinf)
+                (smith-csc202 0 posinf)
+                (smith-extra 0 posinf)
+                (martinez-csc101 0 posinf)
+                (martinez-csc202 0 posinf)
+                (martinez-extra 0 posinf))
+              '(smith-csc101 smith-csc202
+                             martinez-csc101 martinez-csc202))
+   ;; regression, there are many correct answers:
+   '(good
+     #f
+     (8.0
+      ((smith-csc101 4.0)
+       (martinez-csc101 1.0)
+       (smith-csc202 5.0)
+       (martinez-csc202 0.0)
+       (smith-extra 0.0)
+       (martinez-extra 8.0)))))
 
 
   )

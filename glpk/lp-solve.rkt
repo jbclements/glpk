@@ -145,19 +145,14 @@
                   list->set
                   set-empty?))
 
-#;(U (List 'bad-result FailCode)
-                    (List 'bad-status SolutionStatus)
-                    Solution)
 ;; the type for lp-solve is derived from the formulation of the
 ;; linear programming problem as described in glpk.pdf.
-
-
 (: lp-solve
    (Objective Direction (Listof Constraint) (Listof Bound)
               [#:terminal-output Boolean]
-              -> (U (List 'bad-result FailCode)
-                    (List 'bad-status SolutionStatus)
-                    Solution)))
+              -> (U (List 'bad-result FailCode False)
+                    (List 'bad-status SolutionStatus False)
+                    (List 'good #f Solution))))
 (define (lp-solve objective direction constraints bounds #:terminal-output [term-out? #f])
   (define ps (problem-setup objective direction constraints bounds term-out?))
   (define struct-vars (car ps))
@@ -167,17 +162,20 @@
      (match (glp_get_status prob)
        ['GLP_OPT
         (list
-         (glp_get_obj_val prob)
-         (for/list : (Listof (List Symbol Float))
-           ([struct-var (in-list struct-vars)]
-            [i : Natural
-               (ann (in-range 1 (add1 (length struct-vars)))
-                    (Sequenceof Natural))])
-           (list struct-var (glp_get_col_prim prob i))))]
+         'good
+         #f
+         (list
+          (glp_get_obj_val prob)
+          (for/list : (Listof (List Symbol Float))
+            ([struct-var (in-list struct-vars)]
+             [i : Natural
+                (ann (in-range 1 (add1 (length struct-vars)))
+                     (Sequenceof Natural))])
+            (list struct-var (glp_get_col_prim prob i)))))]
        [other-status
-        (list 'bad-status other-status)])]
+        (list 'bad-status other-status #f)])]
     [fail-code
-     (list 'bad-result (cast fail-code FailCode))]))
+     (list 'bad-result (cast fail-code FailCode) #f)]))
 
 ;; perform a mixed-integer programming (MIP) solve:
 (: mip-solve
@@ -185,8 +183,8 @@
               [#:terminal-output Boolean]
               [#:time-limit (U False Natural)]
               -> (U (List 'bad-result FailCode (U False Solution))
-                    (List 'bad-status SolutionStatus)
-                    Solution)))
+                    (List 'bad-status SolutionStatus False)
+                    (List 'good #f Solution))))
 (define (mip-solve objective direction constraints bounds integer-vars
                    #:terminal-output [term-out? #f]
                    #:time-limit [time-limit #f])
@@ -215,9 +213,9 @@
   (cond [(eq? result 'success)
          (match (glp_mip_status prob)
            ['GLP_OPT
-            (extract-solution prob struct-vars)]
+            (list 'good #f (extract-solution prob struct-vars))]
            [other-status
-            (list 'bad-status other-status)])]
+            (list 'bad-status other-status #f)])]
         [else
          (match result
            ;; in the case of timeout, we might have a useful solution?
