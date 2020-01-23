@@ -17,7 +17,7 @@
 ;; this formulation of the problem comes from glpk.pdf. You need
 ;; to express your problem using this formulation.
 
-;; An Objective function is a constant plus a linear combination
+;; An Objective function is a linear combination
 ;; of structural variables, plus a constant.
 ;; So, for instance, the objective function 3x + 4y - 7z + 9
 ;; would be represented as  '(9 (3 x) (4 y) (-7 z))
@@ -31,8 +31,8 @@
 ;; objective function is to be minimized
 (define-type Direction (U 'max 'min))
 
-;; a Constraint sets an auxiliary variable equal to a constant
-;; plus a linear combination of structural variables.
+;; a Constraint sets an auxiliary variable equal to
+;; a linear combination of structural variables.
 ;; So, for instance, the constraint
 ;; a = 3x + 4y - 7z would be represented as
 ;; '(a (3 x) (4 y) (-7 z))
