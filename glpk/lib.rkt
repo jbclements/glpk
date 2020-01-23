@@ -538,12 +538,12 @@
 ;;;void glp_set_row_name(glp_prob *P, int i, const char *name);
 ;;;/* assign (change) row name */
 ;; yikes... what if the row doesn't exist?
-(define-glpk glp_set_row_name (_fun _PROB-pointer _int _bytes -> _void))
+(define-glpk glp_set_row_name (_fun _PROB-pointer _int _bytes/nul-terminated -> _void))
 ;;;
 ;;;void glp_set_col_name(glp_prob *P, int j, const char *name);
 ;;;/* assign (change) column name */
 
-(define-glpk glp_set_col_name (_fun _PROB-pointer _int _bytes -> _void))
+(define-glpk glp_set_col_name (_fun _PROB-pointer _int _bytes/nul-terminated -> _void))
 
 ;;;
 ;;;void glp_set_row_bnds(glp_prob *P, int i, int type, double lb,

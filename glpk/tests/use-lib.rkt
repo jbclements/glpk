@@ -1,7 +1,7 @@
 #lang racket
 
 ;; this is a translation of the sample code given in the GLPK documentation, used while figuring things
-;; out for the first time. Probably safe to delete it? Might be useful, I suppose
+;; out for the first time. There's at least one bug (I just fixed) that was only triggered by this file.
 
 (require "../lib.rkt"
          ffi/unsafe)
